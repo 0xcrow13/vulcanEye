@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"unicode/utf8"
+	"sync"
 )
 
 func runCLI() {
@@ -24,6 +24,14 @@ func runCLI() {
 	outputFlag := flag.String("o", "", "Output file to save the results")
 	debugFlag := flag.Bool("d", false, "Enable debug mode")
 	crawlLevelFlag := flag.Int("crawl", 1, "Crawl level (default 1, higher = deeper crawl)")
+	rateFlag := flag.Int("rate", 10, "Max requests per second (0 = unlimited)")
+	proxyFlag := flag.String("proxy", "", "HTTP proxy URL (e.g., http://127.0.0.1:8080 for Burp/ZAP)")
+	userAgentFlag := flag.String("agent", "", "Custom User-Agent header")
+	logFlag := flag.String("log", "", "Log file for request/response details")
+	outputFormatFlag := flag.String("format", "text", "Output format: text, json, or xml")
+
+	// Custom headers (can be specified multiple times)
+	headerFlag := flag.String("hdr", "", "Custom header (format: \"Name: Value\")")
 
 	// New flags for per-bug scanning
 	scanXSSFlag := flag.Bool("x", false, "Scan for Cross-Site Scripting (XSS)")
@@ -33,6 +41,11 @@ func runCLI() {
 	scanOpenRedirectFlag := flag.Bool("or", false, "Scan for Open Redirect")
 	scanPathTraversalFlag := flag.Bool("pt", false, "Scan for Path Traversal")
 	scanCSRFFlag := flag.Bool("csrf", false, "Scan for Cross-Site Request Forgery (CSRF)")
+	scanSSRFFlag := flag.Bool("ssrf", false, "Scan for Server-Side Request Forgery (SSRF)")
+	scanSSTIFlag := flag.Bool("ssti", false, "Scan for Server-Side Template Injection (SSTI)")
+	scanNoSQLiFlag := flag.Bool("nosql", false, "Scan for NoSQL Injection")
+	scanXXEFlag := flag.Bool("xxe", false, "Scan for XML External Entity (XXE)")
+	scanHeaderInjectionFlag := flag.Bool("header", false, "Scan for Header Injection (CRLF)")
 
 	flag.Parse()
 
@@ -49,6 +62,12 @@ func runCLI() {
 		OutputFile:        *outputFlag,
 		Debug:             *debugFlag,
 		CrawlLevel:        *crawlLevelFlag,
+		RateLimit:         *rateFlag,
+		Proxy:             *proxyFlag,
+		UserAgent:         *userAgentFlag,
+		LogFile:           *logFlag,
+		OutputFormat:      *outputFormatFlag,
+		CustomHeaders:     parseCustomHeaders(*headerFlag),
 		ScanXSS:           *scanXSSFlag,
 		ScanSQLi:          *scanSQLiFlag,
 		ScanLFI:           *scanLFIFlag,
@@ -56,10 +75,19 @@ func runCLI() {
 		ScanOpenRedirect:  *scanOpenRedirectFlag,
 		ScanPathTraversal: *scanPathTraversalFlag,
 		ScanCSRF:          *scanCSRFFlag,
+		ScanSSRF:          *scanSSRFFlag,
+		ScanSSTI:          *scanSSTIFlag,
+		ScanNoSQLi:        *scanNoSQLiFlag,
+		ScanXXE:           *scanXXEFlag,
+		ScanHeaderInjection: *scanHeaderInjectionFlag,
+	}
+	if cfg.RateLimit > 0 {
+		cfg.rateLimiter = NewRateLimiter(cfg.RateLimit)
+		defer cfg.rateLimiter.Stop()
 	}
 
 	// If no scan type is specified, enable all
-	if !cfg.ScanXSS && !cfg.ScanSQLi && !cfg.ScanLFI && !cfg.ScanRCE && !cfg.ScanOpenRedirect && !cfg.ScanPathTraversal && !cfg.ScanCSRF {
+	if !cfg.ScanXSS && !cfg.ScanSQLi && !cfg.ScanLFI && !cfg.ScanRCE && !cfg.ScanOpenRedirect && !cfg.ScanPathTraversal && !cfg.ScanCSRF && !cfg.ScanSSRF && !cfg.ScanSSTI && !cfg.ScanNoSQLi && !cfg.ScanXXE && !cfg.ScanHeaderInjection {
 		cfg.ScanXSS = true
 		cfg.ScanSQLi = true
 		cfg.ScanLFI = true
@@ -67,6 +95,11 @@ func runCLI() {
 		cfg.ScanOpenRedirect = true
 		cfg.ScanPathTraversal = true
 		cfg.ScanCSRF = true
+		cfg.ScanSSRF = true
+		cfg.ScanSSTI = true
+		cfg.ScanNoSQLi = true
+		cfg.ScanXXE = true
+		cfg.ScanHeaderInjection = true
 	}
 
 	if cfg.OutputFile != "" {
@@ -79,34 +112,39 @@ func runCLI() {
 		os.Stdout = f
 	}
 
+	// Initialize output system for structured formats and logging
+	InitOutput(cfg)
+
 	printBanner()
-	printBoxedSection("Scanning URL: " + cfg.URL)
+	printBoxedSection(cfg.URL)
 
-	// Consistent [!] alignment block
-	printAlignedInfo(ColorCyan, "[!] Fingerprinting backend Technologies.")
-	printAlignedInfo(ColorCyan, "[!] Host: "+extractHost(cfg.URL))
-	printAlignedInfo(ColorCyan, "[!] WebServer:")
+	printBullet(ColorCyan, "Fingerprinting backend technologies")
+	printBullet(ColorCyan, "Host: "+extractHost(cfg.URL))
+	printBullet(ColorCyan, "WebServer:")
 
-	fmt.Printf("%s[!] Crawling with level %d...%s\n", ColorCyan, cfg.CrawlLevel, ColorReset)
 	urls := crawlSite(cfg, cfg.URL, cfg.CrawlLevel)
-	fmt.Printf("%s[!] Crawled %d URLs:%s\n", ColorCyan, len(urls), ColorReset)
+	if len(urls) == 1 {
+		printBullet(ColorCyan, fmt.Sprintf("Found %d URL", len(urls)))
+	} else {
+		printBullet(ColorCyan, fmt.Sprintf("Found %d URLs", len(urls)))
+	}
 	for _, u := range urls {
-		fmt.Printf("%s - %s%s\n", ColorCyan, u, ColorReset)
+		fmt.Printf("%s    %s %s%s\n", ColorCyan, IconBullet, u, ColorReset)
 	}
 	fmt.Println()
 
 	for _, targetURL := range urls {
-		printAlignedInfo(ColorCyan, "[!] Scanning page: "+targetURL)
+		printBullet(ColorCyan, "Scanning "+targetURL)
 		pageBody, _, err := fetchURL(cfg, targetURL, "GET", nil, nil)
 		if err != nil {
-			printAlignedInfo(ColorRed, "[!] Could not fetch page: "+err.Error())
+			fmt.Printf("%s  %s %s%s\n", ColorRed, IconWarn, err.Error(), ColorReset)
 			continue
 		}
 		paramList, _, _ := extractParamNamesFromHTML(pageBody, cfg.Method)
 		uploadForms := findFileUploadForms(pageBody)
 		if cfg.Debug {
 			for _, f := range uploadForms {
-				printAlignedInfo(ColorCyan, fmt.Sprintf("[DEBUG] Upload form found: action=%q method=%q fileField=%q otherFields=%v", f.Action, f.Method, f.FileField, f.OtherFields))
+				fmt.Printf("%s    %s action=%q method=%q fileField=%q otherFields=%v%s\n", ColorCyan, IconBullet, f.Action, f.Method, f.FileField, f.OtherFields, ColorReset)
 			}
 		}
 		scanFileUploadForms(cfg, targetURL, uploadForms)
@@ -122,123 +160,198 @@ func runCLI() {
 			paramList = []string{cfg.InjectParam}
 		}
 		if len(paramList) == 0 {
-			printAlignedInfo(ColorRed, "[!] No injectable parameters found on page.")
+			printBullet(ColorYellow, "No injectable parameters found on page")
+			if cfg.ScanCSRF {
+				scanCSRF(cfg, targetURL, "", "", "", targetURL, url.Values{})
+			}
 			continue
 		}
-		printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Auto-detected parameters: %v", paramList))
+		printBullet(ColorCyan, fmt.Sprintf("Auto-detected parameters: %v", paramList))
 
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 5)
 		for _, param := range paramList {
-			baseURL, params, _ := extractParamsFromURL(targetURL)
-			origVal := params.Get(param)
-			baseVal := origVal
-			if baseVal == "" {
-				if isNumericParam(param) {
-					baseVal = "1"
-				} else {
-					baseVal = "test"
-				}
-			}
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(p string) {
+				defer wg.Done()
+				defer func() { <-sem }()
 
-			for _, submitName := range []string{"Submit", "submit", "go", "Go"} {
-				if _, ok := params[submitName]; !ok {
-					params.Set(submitName, "Submit")
-				}
-			}
-
-			if param == "ip" && strings.Contains(targetURL, "/vulnerabilities/exec/") {
-				cfg.Method = "POST"
-				params.Set("Submit", "Submit")
-				baseVal = "127.0.0.1"
-			}
-
-			if cfg.ScanRCE {
-				printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Scanning for Remote Code/Command Execution vulnerabilities in parameter '%s'...", param))
-				rceFound := scanRCEMarker(cfg, param, baseVal, origVal, baseURL, params)
-				if !rceFound {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] No Remote Code/Command Execution vulnerabilities detected in parameter '%s'.", param))
-				}
-			}
-
-			if cfg.ScanXSS {
-				printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Scanning for XSS vulnerabilities in parameter '%s'...", param))
-				xssFound := scanXSS(cfg, param, baseVal, origVal, baseURL, params)
-				if xssFound == 0 {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] No XSS vulnerabilities detected in parameter '%s'.", param))
-				} else {
-					printAlignedInfo(ColorRed, fmt.Sprintf("[!] Congratulations! Found %d XSS bug(s) in parameter '%s'.", xssFound, param))
-				}
-			}
-
-			if cfg.ScanSQLi {
-				printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Scanning for SQL Injection vulnerabilities in parameter '%s'...", param))
-				sqliFound := scanSQLi(cfg, param, baseVal, origVal, baseURL, params)
-				if sqliFound == 0 {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] No SQL Injection vulnerabilities detected in parameter '%s'.", param))
-				} else {
-					printAlignedInfo(ColorRed, fmt.Sprintf("[!] Congratulations! Found %d SQL Injection bug(s) in parameter '%s'.", sqliFound, param))
-				}
-
-				if scanBooleanSQLi(cfg, param, baseVal, origVal, baseURL, params) {
-					printAlignedInfo(ColorRed, fmt.Sprintf("[!] Boolean-based SQL Injection detected in parameter '%s'.", param))
-				} else {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] No Boolean-based SQL Injection detected in parameter '%s'.", param))
-				}
-			}
-
-			if cfg.ScanLFI {
-				printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Scanning for Local/Remote File Inclusion vulnerabilities in parameter '%s'...", param))
-				lfiFound := scanLFI(cfg, param, baseVal, origVal, baseURL, params)
-				if lfiFound == 0 {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] No Local/Remote File Inclusion vulnerabilities detected in parameter '%s'.", param))
-				} else {
-					printAlignedInfo(ColorRed, fmt.Sprintf("[!] Congratulations! Found %d LFI/RFI bug(s) in parameter '%s'.", lfiFound, param))
-				}
-			}
-
-			if cfg.ScanPathTraversal {
-				printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Scanning for Path Traversal vulnerabilities in parameter '%s'...", param))
-				ptFound := scanPathTraversal(cfg, param, baseVal, origVal, baseURL, params)
-				if ptFound == 0 {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] No Path Traversal vulnerabilities detected in parameter '%s'.", param))
-				} else {
-					printAlignedInfo(ColorRed, fmt.Sprintf("[!] Congratulations! Found %d Path Traversal bug(s) in parameter '%s'.", ptFound, param))
-				}
-			}
-
-			if cfg.ScanCSRF {
-				printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Scanning for CSRF vulnerabilities in parameter '%s'...", param))
-				csrfFound := scanCSRF(cfg, targetURL, param, baseVal, origVal, baseURL, params)
-				if csrfFound == 0 {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] No CSRF vulnerabilities detected in parameter '%s'.", param))
-				} else {
-					printAlignedInfo(ColorRed, fmt.Sprintf("[!] Possible CSRF risk detected in parameter '%s'.", param))
-				}
-			}
-
-			if cfg.ScanOpenRedirect {
-				redirectParams := []string{"url", "next", "redirect", "return", "dest", "destination", "continue"}
-				openRedirectParam := false
-				for _, rParam := range redirectParams {
-					if strings.EqualFold(param, rParam) {
-						openRedirectParam = true
-						break
+				baseURL, params, _ := extractParamsFromURL(targetURL)
+				origVal := params.Get(p)
+				baseVal := origVal
+				if baseVal == "" {
+					if isNumericParam(p) {
+						baseVal = "1"
+					} else {
+						baseVal = "test"
 					}
 				}
-				if openRedirectParam {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Scanning for Open Redirect vulnerabilities in parameter '%s'...", param))
-					found := scanOpenRedirect(cfg, param, baseVal, origVal, baseURL, params)
-					if !found {
-						printAlignedInfo(ColorCyan, fmt.Sprintf("[!] No Open Redirect vulnerabilities detected in parameter '%s'.", param))
+
+				for _, submitName := range []string{"Submit", "submit", "go", "Go"} {
+					if _, ok := params[submitName]; !ok {
+						params.Set(submitName, "Submit")
 					}
-				} else {
-					printAlignedInfo(ColorCyan, fmt.Sprintf("[!] Skipping Open Redirect scan for parameter '%s' (not a typical redirect parameter).", param))
 				}
-			}
+
+				origMethod := cfg.Method
+				defer func() { cfg.Method = origMethod }()
+
+				if p == "ip" && strings.Contains(targetURL, "/vulnerabilities/exec/") {
+					cfg.Method = "POST"
+					params.Set("Submit", "Submit")
+					baseVal = "127.0.0.1"
+				}
+
+				if cfg.ScanRCE {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for RCE", p))
+					if !scanRCEMarker(cfg, p, baseVal, origVal, baseURL, params) {
+						printBullet(ColorGreen, fmt.Sprintf("No RCE in %s", p))
+					}
+				}
+
+				if cfg.ScanXSS {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for XSS", p))
+					xssFound := scanXSS(cfg, p, baseVal, origVal, baseURL, params)
+					if xssFound == 0 {
+						printBullet(ColorGreen, fmt.Sprintf("No XSS in %s", p))
+					} else {
+						printBullet(ColorRed, fmt.Sprintf("Found %d XSS in %s", xssFound, p))
+					}
+				}
+
+				if cfg.ScanSQLi {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for SQLi", p))
+					sqliFound := scanSQLi(cfg, p, baseVal, origVal, baseURL, params)
+					if sqliFound == 0 {
+						printBullet(ColorGreen, fmt.Sprintf("No SQLi in %s", p))
+					} else {
+						printBullet(ColorRed, fmt.Sprintf("Found %d SQLi in %s", sqliFound, p))
+					}
+
+					if scanBooleanSQLi(cfg, p, baseVal, origVal, baseURL, params) {
+						printBullet(ColorRed, fmt.Sprintf("Boolean SQLi in %s", p))
+					} else {
+						printBullet(ColorGreen, fmt.Sprintf("No boolean SQLi in %s", p))
+					}
+
+					if scanSQLiTimeBased(cfg, p, baseVal, origVal, baseURL, params) {
+						printBullet(ColorRed, fmt.Sprintf("Time-based SQLi in %s", p))
+					} else {
+						printBullet(ColorGreen, fmt.Sprintf("No time-based SQLi in %s", p))
+					}
+				}
+
+				if cfg.ScanLFI {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for LFI", p))
+					lfiFound := scanLFI(cfg, p, baseVal, origVal, baseURL, params)
+					if lfiFound == 0 {
+						printBullet(ColorGreen, fmt.Sprintf("No LFI in %s", p))
+					} else {
+						printBullet(ColorRed, fmt.Sprintf("Found %d LFI in %s", lfiFound, p))
+					}
+				}
+
+				if cfg.ScanPathTraversal {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for Path Traversal", p))
+					ptFound := scanPathTraversal(cfg, p, baseVal, origVal, baseURL, params)
+					if ptFound == 0 {
+						printBullet(ColorGreen, fmt.Sprintf("No Path Traversal in %s", p))
+					} else {
+						printBullet(ColorRed, fmt.Sprintf("Found %d Path Traversal in %s", ptFound, p))
+					}
+				}
+
+				if cfg.ScanCSRF {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for CSRF", p))
+					csrfFound := scanCSRF(cfg, targetURL, p, baseVal, origVal, baseURL, params)
+					if csrfFound == 0 {
+						printBullet(ColorGreen, fmt.Sprintf("No CSRF risk in %s", p))
+					} else {
+						printBullet(ColorRed, fmt.Sprintf("CSRF risk in %s", p))
+					}
+				}
+
+				if cfg.ScanOpenRedirect {
+					redirectParams := []string{"url", "next", "redirect", "return", "dest", "destination", "continue"}
+					openRedirectParam := false
+					for _, rParam := range redirectParams {
+						if strings.EqualFold(p, rParam) {
+							openRedirectParam = true
+							break
+						}
+					}
+					if openRedirectParam {
+						printBullet(ColorCyan, fmt.Sprintf("Scanning %s for Open Redirect", p))
+						if !scanOpenRedirect(cfg, p, baseVal, origVal, baseURL, params) {
+							printBullet(ColorGreen, fmt.Sprintf("No Open Redirect in %s", p))
+						}
+					} else {
+						printBullet(ColorCyan, fmt.Sprintf("Skipping Open Redirect for %s (not a redirect param)", p))
+					}
+				}
+
+				if cfg.ScanSSRF {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for SSRF", p))
+					if !scanSSRF(cfg, p, baseVal, origVal, baseURL, params) {
+						printBullet(ColorGreen, fmt.Sprintf("No SSRF in %s", p))
+					}
+				}
+
+				if cfg.ScanSSTI {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for SSTI", p))
+					if !scanSSTI(cfg, p, baseVal, origVal, baseURL, params) {
+						printBullet(ColorGreen, fmt.Sprintf("No SSTI in %s", p))
+					}
+				}
+
+				if cfg.ScanNoSQLi {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for NoSQL Injection", p))
+					if !scanNoSQLi(cfg, p, baseVal, origVal, baseURL, params) {
+						printBullet(ColorGreen, fmt.Sprintf("No NoSQL Injection in %s", p))
+					}
+				}
+
+				if cfg.ScanXXE {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for XXE", p))
+					if !scanXXE(cfg, p, baseVal, origVal, baseURL, params) {
+						printBullet(ColorGreen, fmt.Sprintf("No XXE in %s", p))
+					}
+				}
+
+				if cfg.ScanHeaderInjection {
+					printBullet(ColorCyan, fmt.Sprintf("Scanning %s for Header Injection", p))
+					if !scanHeaderInjection(cfg, p, baseVal, origVal, baseURL, params) {
+						printBullet(ColorGreen, fmt.Sprintf("No Header Injection in %s", p))
+					}
+				}
+			}(param)
 		}
+		wg.Wait()
+	}
+
+	// Finalize output and write results in the requested format
+	if err := FinalizeOutput(cfg); err != nil {
+		fmt.Printf("%s[!] Error writing output: %v%s\n", ColorRed, err, ColorReset)
 	}
 }
 
-// Helper: extracts host from URL for pretty output
+// parseCustomHeaders parses a custom header string (format: "Name: Value")
+func parseCustomHeaders(headerStr string) map[string]string {
+	headers := make(map[string]string)
+	if headerStr == "" {
+		return headers
+	}
+
+	parts := strings.Split(headerStr, ":")
+	if len(parts) >= 2 {
+		name := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(strings.Join(parts[1:], ":"))
+		headers[name] = value
+	}
+	return headers
+}
+
 func extractHost(fullURL string) string {
 	u, err := url.Parse(fullURL)
 	if err != nil {
@@ -247,37 +360,11 @@ func extractHost(fullURL string) string {
 	return u.Host
 }
 
-// Prints a message with [!] left-aligned and rest of line starting at column 6, with color
-func printAlignedInfo(color, msg string) {
-	const prefix = "[!]"
-	const padTo = 6 // space after [!]
-	// Remove any existing prefix
-	if strings.HasPrefix(msg, prefix) {
-		msg = msg[len(prefix):]
-	}
-	// Remove any leading spaces
-	msg = strings.TrimLeft(msg, " ")
-	fmt.Printf("%s[!]%s%s%s\n", color, strings.Repeat(" ", padTo-len(prefix)), msg, ColorReset)
+func printBullet(color, msg string) {
+	fmt.Printf("%s  %s %s%s\n", color, IconBullet, msg, ColorReset)
 }
 
-// Boxed section function for the scanning URL, Unicode box + ellipsis if needed
 func printBoxedSection(title string) {
-	maxLen := 78
-	ellipsis := "..."
-	titleLen := utf8.RuneCountInString(title)
-	displayTitle := title
-	if titleLen > maxLen {
-		runes := []rune(title)
-		displayTitle = string(runes[:maxLen-len(ellipsis)]) + ellipsis
-		titleLen = utf8.RuneCountInString(displayTitle)
-	}
-	padding := (maxLen - titleLen) / 2
-	rightPadding := maxLen - titleLen - padding
-	fmt.Println(ColorCyan + "╭──────────────────────────────────────────────────────────────────────────────╮" + ColorReset)
-	fmt.Print(ColorCyan + "│" + ColorReset)
-	fmt.Print(strings.Repeat(" ", padding))
-	fmt.Print(displayTitle)
-	fmt.Print(strings.Repeat(" ", rightPadding))
-	fmt.Println(ColorCyan + "│" + ColorReset)
-	fmt.Println(ColorCyan + "╰──────────────────────────────────────────────────────────────────────────────╯" + ColorReset)
+	fmt.Println()
+	fmt.Printf("%s  ── Target ── %s%s\n", ColorCyan, title, ColorReset)
 }

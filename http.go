@@ -11,11 +11,28 @@ import (
 	"time"
 )
 
-// fetchURL performs GET or POST requests and returns the response body and headers.
-func fetchURL(cfg *ScanConfig, u string, method string, data url.Values, extraHeaders map[string]string) (string, http.Header, error) {
+// getHTTPTransport creates an HTTP transport with optional proxy support
+func getHTTPTransport(cfg *ScanConfig) *http.Transport {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
+
+	if cfg.Proxy != "" {
+		proxyURL, err := url.Parse(cfg.Proxy)
+		if err == nil {
+			tr.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+
+	return tr
+}
+
+// fetchURL performs GET or POST requests and returns the response body and headers.
+func fetchURL(cfg *ScanConfig, u string, method string, data url.Values, extraHeaders map[string]string) (string, http.Header, error) {
+	if cfg.rateLimiter != nil {
+		cfg.rateLimiter.Wait()
+	}
+	tr := getHTTPTransport(cfg)
 	client := &http.Client{Timeout: 15 * time.Second, Transport: tr}
 
 	var req *http.Request
@@ -31,12 +48,29 @@ func fetchURL(cfg *ScanConfig, u string, method string, data url.Values, extraHe
 		return "", nil, err
 	}
 
-	req.Header.Set("User-Agent", "pwntwo/1.0")
+	// Set User-Agent (use custom if provided, otherwise default)
+	userAgent := cfg.UserAgent
+	if userAgent == "" {
+		userAgent = "pwntwo/1.0"
+	}
+	req.Header.Set("User-Agent", userAgent)
+
 	if cfg.Cookie != "" {
 		req.Header.Set("Cookie", cfg.Cookie)
 	}
-	for k, v := range extraHeaders {
-		req.Header.Set(k, v)
+
+	// Add custom headers from config
+	if cfg.CustomHeaders != nil {
+		for k, v := range cfg.CustomHeaders {
+			req.Header.Set(k, v)
+		}
+	}
+
+	// Add extra headers passed to function
+	if extraHeaders != nil {
+		for k, v := range extraHeaders {
+			req.Header.Set(k, v)
+		}
 	}
 
 	debugPrintf(cfg, "%s %s", method, u)
@@ -47,17 +81,27 @@ func fetchURL(cfg *ScanConfig, u string, method string, data url.Values, extraHe
 		debugPrintf(cfg, "Using Cookie: %s", cfg.Cookie)
 	}
 
+	// Log request if logging enabled
+	LogRequest(cfg, method, u, req.Header, data.Encode())
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", nil, err
 	}
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	// Log response if logging enabled
+	LogResponse(cfg, resp.StatusCode, resp.Header, string(bodyBytes))
+
 	return string(bodyBytes), resp.Header, nil
 }
 
 // fetchMultipart handles multipart file uploads
 func fetchMultipart(cfg *ScanConfig, u string, params map[string]string, fileField, fileName string, fileContent []byte, extraHeaders map[string]string) (string, http.Header, error) {
+	if cfg.rateLimiter != nil {
+		cfg.rateLimiter.Wait()
+	}
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	for key, val := range params {
@@ -79,16 +123,35 @@ func fetchMultipart(cfg *ScanConfig, u string, params map[string]string, fileFie
 	if err != nil {
 		return "", nil, err
 	}
-	req.Header.Set("User-Agent", "pwntwo/1.0")
+
+	// Set User-Agent (use custom if provided, otherwise default)
+	userAgent := cfg.UserAgent
+	if userAgent == "" {
+		userAgent = "pwntwo/1.0"
+	}
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Content-Type", w.FormDataContentType())
+
 	if cfg.Cookie != "" {
 		req.Header.Set("Cookie", cfg.Cookie)
 	}
-	for k, v := range extraHeaders {
-		req.Header.Set(k, v)
+
+	// Add custom headers from config
+	if cfg.CustomHeaders != nil {
+		for k, v := range cfg.CustomHeaders {
+			req.Header.Set(k, v)
+		}
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	// Add extra headers passed to function
+	if extraHeaders != nil {
+		for k, v := range extraHeaders {
+			req.Header.Set(k, v)
+		}
+	}
+
+	tr := getHTTPTransport(cfg)
+	client := &http.Client{Timeout: 15 * time.Second, Transport: tr}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", nil, err

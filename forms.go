@@ -222,7 +222,7 @@ func findFileUploadForms(htmlStr string) []UploadForm {
 // Scan file upload forms for vulnerabilities
 func scanFileUploadForms(cfg *ScanConfig, pageURL string, forms []UploadForm) {
 	if len(forms) == 0 {
-		fmt.Printf("%s[!] No file upload forms found on this page.%s\n", ColorGreen, ColorReset)
+		printBullet(ColorGreen, "No file upload forms found on this page")
 		return
 	}
 	for _, form := range forms {
@@ -236,13 +236,13 @@ func scanFileUploadForms(cfg *ScanConfig, pageURL string, forms []UploadForm) {
 			base, _ := url.Parse(pageURL)
 			fullURL = base.ResolveReference(&url.URL{Path: form.Action}).String()
 		}
-		fmt.Printf("%s[!] Scanning for File Upload vulnerabilities in file field '%s' using form action '%s'...%s\n", ColorCyan, form.FileField, form.Action, ColorReset)
+		printBullet(ColorCyan, fmt.Sprintf("Scanning file field '%s' via form action '%s'", form.FileField, form.Action))
 		fileName := "pwntest.php"
 		fileContent := []byte("<?php echo 'pwntwouploadmarker'; ?>")
 		otherFields := form.OtherFields
 		respBody, _, err := fetchMultipart(cfg, fullURL, otherFields, form.FileField, fileName, fileContent, nil)
 		if err != nil {
-			fmt.Printf("%s[!] File upload POST request error: %v%s\n", ColorRed, err, ColorReset)
+			fmt.Printf("%s  %s %s%s\n", ColorRed, IconWarn, err.Error(), ColorReset)
 			continue
 		}
 		successMarkers := []string{
@@ -255,15 +255,15 @@ func scanFileUploadForms(cfg *ScanConfig, pageURL string, forms []UploadForm) {
 		vuln := false
 		for _, m := range successMarkers {
 			if strings.Contains(respBody, m) {
-				fmt.Printf("%s[!!!] POSSIBLE FILE UPLOAD VULNERABILITY!%s\n", ColorRed, ColorReset)
-				fmt.Printf("%s[*] File field: %s%s\n", ColorYellow, form.FileField, ColorReset)
-				fmt.Printf("%s[*] Uploaded file name: %s%s\n", ColorYellow, fileName, ColorReset)
-				fmt.Printf("%s[*] Upload URL: %s%s\n", ColorYellow, fullURL, ColorReset)
+				fmt.Printf("%s  %s POSSIBLE FILE UPLOAD VULNERABILITY%s\n", ColorRed, IconFinding, ColorReset)
+				fmt.Printf("    %sFile field    :%s %s%s\n", ColorYellow, ColorReset, form.FileField, ColorReset)
+				fmt.Printf("    %sUploaded file :%s %s%s\n", ColorYellow, ColorReset, fileName, ColorReset)
+				fmt.Printf("    %sUpload URL    :%s %s%s\n", ColorYellow, ColorReset, fullURL, ColorReset)
 				vuln = true
 			}
 		}
 		if !vuln {
-			fmt.Printf("%s[!] No file upload vulnerabilities detected in field '%s'.%s\n", ColorGreen, form.FileField, ColorReset)
+			printBullet(ColorGreen, fmt.Sprintf("No file upload vulnerabilities in field '%s'", form.FileField))
 		}
 	}
 }
