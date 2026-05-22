@@ -307,6 +307,7 @@ func VerifyAllFindings(cfg *ScanConfig) {
 			unverified++
 		} else if isValid {
 			verified++
+			cfg.findings[i].Verified = true
 		} else {
 			unverified++
 			// Mark unverified findings with lower confidence

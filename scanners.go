@@ -47,6 +47,7 @@ func scanRCEMarker(cfg *ScanConfig, param string, baseVal string, origVal string
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 			fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+			AddFinding(cfg, Finding{Type: "RCE", Severity: "HIGH", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "Remote Code Execution via command injection"})
 			found = true
 		}
 		params.Set(param, origVal)
@@ -82,6 +83,7 @@ func scanBooleanSQLi(cfg *ScanConfig, param string, baseVal string, origVal stri
 		fmt.Printf("%s  %s BOOLEAN-BASED SQL INJECTION in '%s'%s\n", ColorRed, IconFinding, param, ColorReset)
 		fmt.Printf("    %sTrue payload :%s %s%s\n", ColorYellow, ColorReset, truePayload, ColorReset)
 		fmt.Printf("    %sFalse payload:%s %s%s\n", ColorYellow, ColorReset, falsePayload, ColorReset)
+		AddFinding(cfg, Finding{Type: "SQLi", Severity: "HIGH", Parameter: param, Payload: truePayload, URL: cfg.URL, Method: cfg.Method, Description: "Boolean-based blind SQL Injection"})
 		return true
 	}
 	return false
@@ -140,6 +142,7 @@ func scanXSS(cfg *ScanConfig, param string, baseVal string, origVal string, base
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, raw, ColorReset)
 			fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+			AddFinding(cfg, Finding{Type: "XSS", Severity: "HIGH", Parameter: param, Payload: raw, URL: cfg.URL, Method: cfg.Method, Description: "Cross-Site Scripting (" + contextLabel + ")"})
 			found++
 		}
 
@@ -174,6 +177,7 @@ func scanSQLi(cfg *ScanConfig, param string, baseVal string, origVal string, bas
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, baseVal+payload, ColorReset)
 			fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+			AddFinding(cfg, Finding{Type: "SQLi", Severity: "HIGH", Parameter: param, Payload: baseVal + payload, URL: cfg.URL, Method: cfg.Method, Description: "SQL Injection (error-based)"})
 			found++
 		}
 		params.Set(param, origVal)
@@ -218,6 +222,7 @@ func scanLFI(cfg *ScanConfig, param string, baseVal string, origVal string, base
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 			fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+			AddFinding(cfg, Finding{Type: "LFI", Severity: "HIGH", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "Local File Inclusion / Remote File Inclusion"})
 			found++
 		}
 		params.Set(param, origVal)
@@ -244,6 +249,7 @@ func scanOpenRedirect(cfg *ScanConfig, param string, baseVal string, origVal str
 		fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 		fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 		fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, urlWithParams, ColorReset)
+		AddFinding(cfg, Finding{Type: "Open Redirect", Severity: "MEDIUM", Parameter: param, Payload: payload, URL: urlWithParams, Method: cfg.Method, Description: "Open Redirect via Location header"})
 		return true
 	}
 
@@ -252,6 +258,7 @@ func scanOpenRedirect(cfg *ScanConfig, param string, baseVal string, origVal str
 		fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 		fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 		fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, urlWithParams, ColorReset)
+		AddFinding(cfg, Finding{Type: "Open Redirect", Severity: "MEDIUM", Parameter: param, Payload: payload, URL: urlWithParams, Method: cfg.Method, Description: "Open Redirect (reflected in response body)"})
 		return true
 	}
 
@@ -292,6 +299,7 @@ func scanPathTraversal(cfg *ScanConfig, param, baseVal, origVal, baseURL string,
 				fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 				fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 				fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+				AddFinding(cfg, Finding{Type: "Path Traversal", Severity: "HIGH", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "Path Traversal / Directory Traversal"})
 				found++
 				break
 			}
@@ -345,10 +353,12 @@ func scanCSRF(cfg *ScanConfig, pageURL, param, baseVal, origVal, baseURL string,
 	if !foundToken && !cookieSafe && !contentTypeOK && !doubleSubmit {
 		fmt.Printf("%s  %s CSRF RISK (Multiple unprotected forms)%s\n", ColorRed, IconFinding, ColorReset)
 		fmt.Printf("    %sNo CSRF tokens, insecure cookies, or double-submit verification%s\n", ColorYellow, ColorReset)
+		AddFinding(cfg, Finding{Type: "CSRF", Severity: "MEDIUM", Parameter: param, Payload: "", URL: pageURL, Method: "GET", Description: "CSRF Risk - No CSRF tokens, insecure cookies, or double-submit verification"})
 		riskLevel = 1
 	} else if !foundToken {
 		fmt.Printf("%s  %s CSRF RISK (No CSRF token detected)%s\n", ColorRed, IconFinding, ColorReset)
 		fmt.Printf("    %sForm lacks CSRF token protection%s\n", ColorYellow, ColorReset)
+		AddFinding(cfg, Finding{Type: "CSRF", Severity: "MEDIUM", Parameter: param, Payload: "", URL: pageURL, Method: "GET", Description: "CSRF Risk - Form lacks CSRF token protection"})
 		riskLevel = 1
 	}
 
@@ -420,6 +430,7 @@ func scanSSRF(cfg *ScanConfig, param string, baseVal string, origVal string, bas
 				fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 				fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 				fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+				AddFinding(cfg, Finding{Type: "SSRF", Severity: "HIGH", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "Server-Side Request Forgery"})
 				params.Set(param, origVal)
 				return true
 			}
@@ -471,6 +482,7 @@ func scanSSTI(cfg *ScanConfig, param string, baseVal string, origVal string, bas
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 			fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+			AddFinding(cfg, Finding{Type: "SSTI", Severity: "HIGH", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "Server-Side Template Injection"})
 			params.Set(param, origVal)
 			return true
 		}
@@ -519,6 +531,7 @@ func scanNoSQLi(cfg *ScanConfig, param string, baseVal string, origVal string, b
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 			fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+			AddFinding(cfg, Finding{Type: "NoSQL Injection", Severity: "HIGH", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "NoSQL Injection"})
 			params.Set(param, origVal)
 			return true
 		}
@@ -559,6 +572,7 @@ func scanXXE(cfg *ScanConfig, param string, baseVal string, origVal string, base
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s (truncated)%s\n", ColorYellow, ColorReset, payload[:50], ColorReset)
 			fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+			AddFinding(cfg, Finding{Type: "XXE", Severity: "HIGH", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "XML External Entity (XXE) Injection"})
 			params.Set(param, origVal)
 			return true
 		}
@@ -604,6 +618,7 @@ func scanHeaderInjection(cfg *ScanConfig, param string, baseVal string, origVal 
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 			fmt.Printf("    %sURL        :%s %s%s\n", ColorYellow, ColorReset, cfg.URL, ColorReset)
+			AddFinding(cfg, Finding{Type: "Header Injection", Severity: "MEDIUM", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "CRLF Header Injection"})
 			params.Set(param, origVal)
 			return true
 		}
@@ -646,6 +661,7 @@ func scanSQLiTimeBased(cfg *ScanConfig, param string, baseVal string, origVal st
 			fmt.Printf("    %sParameter  :%s %s%s\n", ColorYellow, ColorReset, param, ColorReset)
 			fmt.Printf("    %sPayload    :%s %s%s\n", ColorYellow, ColorReset, payload, ColorReset)
 			fmt.Printf("    %sResponse time: %dms%s\n", ColorYellow, elapsed, ColorReset)
+			AddFinding(cfg, Finding{Type: "SQLi (Time-Based)", Severity: "HIGH", Parameter: param, Payload: payload, URL: cfg.URL, Method: cfg.Method, Description: "Time-Based Blind SQL Injection"})
 			return true
 		}
 	}
