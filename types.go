@@ -93,6 +93,7 @@ type Finding struct {
 	Method      string `json:"method" xml:"method"`
 	Timestamp   string `json:"timestamp" xml:"timestamp"`
 	Description string `json:"description" xml:"description"`
+	Verified    bool   `json:"verified" xml:"verified,attr"`
 }
 
 // ScanReport represents the complete scan results

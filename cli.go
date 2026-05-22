@@ -29,6 +29,8 @@ func runCLI() {
 	userAgentFlag := flag.String("agent", "", "Custom User-Agent header")
 	logFlag := flag.String("log", "", "Log file for request/response details")
 	outputFormatFlag := flag.String("format", "text", "Output format: text, json, or xml")
+	errorLogFlag := flag.String("elog", "", "Error log file for warnings and errors")
+	verifyFlag := flag.Bool("verify", false, "Verify findings by re-testing them (reduces false positives)")
 
 	// Custom headers (can be specified multiple times)
 	headerFlag := flag.String("hdr", "", "Custom header (format: \"Name: Value\")")
@@ -114,6 +116,20 @@ func runCLI() {
 
 	// Initialize output system for structured formats and logging
 	InitOutput(cfg)
+
+	// Initialize error logger
+	if *errorLogFlag != "" {
+		if err := InitErrorLogger(*errorLogFlag); err != nil {
+			LogWarning("Could not initialize error logger: %v", err)
+		} else {
+			defer CloseErrorLogger()
+		}
+	}
+
+	// Initialize graceful shutdown handling
+	InitGracefulShutdown(cfg)
+	MarkScanStarted()
+	defer MarkScanCompleted()
 
 	printBanner()
 	printBoxedSection(cfg.URL)
@@ -328,6 +344,13 @@ func runCLI() {
 			}(param)
 		}
 		wg.Wait()
+	}
+
+	// Verify findings if requested
+	if *verifyFlag && len(cfg.findings) > 0 {
+		LogInfo("Starting finding verification...")
+		VerifyAllFindings(cfg)
+		LogInfo("Finding verification complete")
 	}
 
 	// Finalize output and write results in the requested format

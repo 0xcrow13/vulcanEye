@@ -89,7 +89,11 @@ func fetchURL(cfg *ScanConfig, u string, method string, data url.Values, extraHe
 		return "", nil, err
 	}
 	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		debugPrintf(cfg, "[!] Error reading response body: %v", err)
+		return "", resp.Header, err
+	}
 
 	// Log response if logging enabled
 	LogResponse(cfg, resp.StatusCode, resp.Header, string(bodyBytes))
@@ -157,7 +161,11 @@ func fetchMultipart(cfg *ScanConfig, u string, params map[string]string, fileFie
 		return "", nil, err
 	}
 	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		debugPrintf(cfg, "[!] Error reading response body: %v", err)
+		return "", resp.Header, err
+	}
 	return string(bodyBytes), resp.Header, nil
 }
 
