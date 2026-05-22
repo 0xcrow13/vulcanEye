@@ -191,7 +191,7 @@ Verification strategies:
 
 ## Credits
 
-Developed by [Xwal13](https://github.com/Xwal13)
+Developed by [0xcrow13](https://github.com/0xcrow13/)
 
 ---
 
