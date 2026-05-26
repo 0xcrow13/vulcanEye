@@ -17,7 +17,7 @@
 
 ```sh
 go install github.com/Xwal13/VulcanEye@latest
-VulcanEye -u "http://target.com/page.php?id=1" -x -s
+VulcanEye -u "http://example.com/page.php?id=1" -x -s
 ```
 
 If no scan flags are given, **all** vulnerability checks run.
